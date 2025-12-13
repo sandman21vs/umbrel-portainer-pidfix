@@ -8,7 +8,6 @@ Caminho do pid (padrão):
 
 ## Instalação (1 linha)
 
-> Substitua `SEU_USUARIO/SEU_REPO` pelo seu repositório.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SEU_USUARIO/SEU_REPO/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/sandman21vs/umbrel-portainer-pidfix/main/install.sh | sudo bash
