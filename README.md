@@ -10,4 +10,4 @@ Caminho do pid (padrão):
 
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sandman21vs/umbrel-portainer-pidfix/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/sandman21vs/umbrel-portainer-pidfix/refs/heads/main/umbrel-portainer-pidfix/install.sh | sudo bash
