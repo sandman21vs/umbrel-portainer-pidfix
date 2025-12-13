@@ -32,37 +32,60 @@ PID_FILE="${PID_DIR}/docker.pid"
 
 log() { echo "[umbrel-portainer-pidfix] $*"; }
 
-# 1) apagar pid stale (e qualquer pid parecido, por segurança)
-if [[ -d "${PID_DIR}" ]]; then
-  if [[ -f "${PID_FILE}" ]]; then
-    log "Removendo pid: ${PID_FILE}"
-    rm -f "${PID_FILE}"
+stop_portainer() {
+  if [[ -x /home/umbrel/umbrel/scripts/app ]]; then
+    log "Parando Portainer via scripts/app"
+    /home/umbrel/umbrel/scripts/app stop portainer || log "Falha ao parar via scripts/app"
+  elif command -v umbreld >/dev/null 2>&1; then
+    log "Parando Portainer via umbreld"
+    umbreld client apps.stop.mutate --appId portainer || log "Falha ao parar via umbreld"
   else
-    log "PID não existe: ${PID_FILE}"
+    local compose="/home/umbrel/umbrel/app-data/portainer/docker-compose.yml"
+    if [[ -f "${compose}" ]]; then
+      log "Parando Portainer via docker compose"
+      (cd "/home/umbrel/umbrel" && docker compose -f "${compose}" stop) || log "Falha ao parar via docker compose"
+    else
+      log "Não encontrei método para parar o Portainer"
+    fi
   fi
+}
 
-  # remove outros .pid antigos no mesmo diretório (opcional)
-  find "${PID_DIR}" -maxdepth 1 -type f -name "*.pid" -print -delete || true
-else
-  log "Diretório não existe: ${PID_DIR}"
-fi
-
-# 2) reiniciar o app Portainer no Umbrel (compatível com versões diferentes)
-if [[ -x /home/umbrel/umbrel/scripts/app ]]; then
-  log "Reiniciando Portainer via scripts/app"
-  /home/umbrel/umbrel/scripts/app restart portainer || true
-elif command -v umbreld >/dev/null 2>&1; then
-  log "Reiniciando Portainer via umbreld"
-  umbreld client apps.restart.mutate --appId portainer || true
-else
-  log "Não achei scripts/app nem umbreld. Tentando restart por docker-compose do app (fallback)."
-  COMPOSE_YML="/home/umbrel/umbrel/app-data/portainer/docker-compose.yml"
-  if [[ -f "${COMPOSE_YML}" ]]; then
-    (cd "/home/umbrel/umbrel" && docker compose -f "${COMPOSE_YML}" restart) || true
+start_portainer() {
+  if [[ -x /home/umbrel/umbrel/scripts/app ]]; then
+    log "Iniciando Portainer via scripts/app"
+    /home/umbrel/umbrel/scripts/app start portainer || log "Falha ao iniciar via scripts/app"
+  elif command -v umbreld >/dev/null 2>&1; then
+    log "Iniciando Portainer via umbreld"
+    umbreld client apps.start.mutate --appId portainer || log "Falha ao iniciar via umbreld"
   else
-    log "Fallback falhou: compose não encontrado em ${COMPOSE_YML}"
+    local compose="/home/umbrel/umbrel/app-data/portainer/docker-compose.yml"
+    if [[ -f "${compose}" ]]; then
+      log "Iniciando Portainer via docker compose"
+      (cd "/home/umbrel/umbrel" && docker compose -f "${compose}" start) || log "Falha ao iniciar via docker compose"
+    else
+      log "Não encontrei método para iniciar o Portainer"
+    fi
   fi
-fi
+}
+
+remove_pid() {
+  if [[ -d "${PID_DIR}" ]]; then
+    if [[ -f "${PID_FILE}" ]]; then
+      log "Removendo pid: ${PID_FILE}"
+      rm -f "${PID_FILE}"
+    else
+      log "PID não existe: ${PID_FILE}"
+    fi
+
+    find "${PID_DIR}" -maxdepth 1 -type f -name "*.pid" -print -delete || true
+  else
+    log "Diretório não existe: ${PID_DIR}"
+  fi
+}
+
+stop_portainer
+remove_pid
+start_portainer
 
 log "OK"
 EOF
@@ -77,7 +100,7 @@ EOF
 
   cat > "${UNIT_FILE}" <<EOF
 [Unit]
-Description=Umbrel Portainer PID fix (remove docker.pid e reinicia Portainer)
+Description=Umbrel Portainer PID fix (para, remove docker.pid e inicia Portainer)
 After=network-online.target docker.service
 Wants=network-online.target
 
