@@ -8,10 +8,6 @@ BIN_DIR="/usr/local/bin"
 SCRIPT_BIN="${BIN_DIR}/umbrel-portainer-pidfix"
 UNIT_FILE="/etc/systemd/system/umbrel-portainer-pidfix.service"
 
-# caminho do .pid (ajuste aqui se mudar no futuro)
-PID_DIR="/home/umbrel/umbrel/app-data/portainer/data/docker"
-PID_FILE="${PID_DIR}/docker.pid"
-
 need_root() {
   if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
     echo "Rode como root: sudo $0"
@@ -27,65 +23,97 @@ install_files() {
 #!/usr/bin/env bash
 set -euo pipefail
 
-PID_DIR="/home/umbrel/umbrel/app-data/portainer/data/docker"
-PID_FILE="${PID_DIR}/docker.pid"
+# Lista de apps e diretórios do Docker-in-Docker que podem deixar docker.pid para trás
+APP_PID_DIRS=(
+  "portainer:/home/umbrel/umbrel/app-data/portainer/data/docker"
+  "arcane:/home/umbrel/umbrel/app-data/arcane/data/docker"
+)
 
 log() { echo "[umbrel-portainer-pidfix] $*"; }
 
-stop_portainer() {
+stop_app() {
+  local app="$1"
+
   if [[ -x /home/umbrel/umbrel/scripts/app ]]; then
-    log "Parando Portainer via scripts/app"
-    /home/umbrel/umbrel/scripts/app stop portainer || log "Falha ao parar via scripts/app"
+    log "Parando ${app} via scripts/app"
+    /home/umbrel/umbrel/scripts/app stop "${app}" || log "Falha ao parar ${app} via scripts/app"
+    return
   elif command -v umbreld >/dev/null 2>&1; then
-    log "Parando Portainer via umbreld"
-    umbreld client apps.stop.mutate --appId portainer || log "Falha ao parar via umbreld"
+    log "Parando ${app} via umbreld"
+    umbreld client apps.stop.mutate --appId "${app}" || log "Falha ao parar ${app} via umbreld"
+    return
   else
-    local compose="/home/umbrel/umbrel/app-data/portainer/docker-compose.yml"
+    local compose="/home/umbrel/umbrel/app-data/${app}/docker-compose.yml"
     if [[ -f "${compose}" ]]; then
-      log "Parando Portainer via docker compose"
-      (cd "/home/umbrel/umbrel" && docker compose -f "${compose}" stop) || log "Falha ao parar via docker compose"
+      log "Parando ${app} via docker compose"
+      (cd "/home/umbrel/umbrel" && docker compose -f "${compose}" stop) || log "Falha ao parar ${app} via docker compose"
     else
-      log "Não encontrei método para parar o Portainer"
+      log "Não encontrei método para parar o app ${app}"
     fi
   fi
 }
 
-start_portainer() {
+start_app() {
+  local app="$1"
+
   if [[ -x /home/umbrel/umbrel/scripts/app ]]; then
-    log "Iniciando Portainer via scripts/app"
-    /home/umbrel/umbrel/scripts/app start portainer || log "Falha ao iniciar via scripts/app"
+    log "Iniciando ${app} via scripts/app"
+    /home/umbrel/umbrel/scripts/app start "${app}" || log "Falha ao iniciar ${app} via scripts/app"
+    return
   elif command -v umbreld >/dev/null 2>&1; then
-    log "Iniciando Portainer via umbreld"
-    umbreld client apps.start.mutate --appId portainer || log "Falha ao iniciar via umbreld"
+    log "Iniciando ${app} via umbreld"
+    umbreld client apps.start.mutate --appId "${app}" || log "Falha ao iniciar ${app} via umbreld"
+    return
   else
-    local compose="/home/umbrel/umbrel/app-data/portainer/docker-compose.yml"
+    local compose="/home/umbrel/umbrel/app-data/${app}/docker-compose.yml"
     if [[ -f "${compose}" ]]; then
-      log "Iniciando Portainer via docker compose"
-      (cd "/home/umbrel/umbrel" && docker compose -f "${compose}" start) || log "Falha ao iniciar via docker compose"
+      log "Iniciando ${app} via docker compose"
+      (cd "/home/umbrel/umbrel" && docker compose -f "${compose}" start) || log "Falha ao iniciar ${app} via docker compose"
     else
-      log "Não encontrei método para iniciar o Portainer"
+      log "Não encontrei método para iniciar o app ${app}"
     fi
   fi
 }
 
-remove_pid() {
-  if [[ -d "${PID_DIR}" ]]; then
-    if [[ -f "${PID_FILE}" ]]; then
-      log "Removendo pid: ${PID_FILE}"
-      rm -f "${PID_FILE}"
-    else
-      log "PID não existe: ${PID_FILE}"
-    fi
+cleanup_pid_dir() {
+  local app="$1"
+  local pid_dir="$2"
+  local pid_file="${pid_dir}/docker.pid"
 
-    find "${PID_DIR}" -maxdepth 1 -type f -name "*.pid" -print -delete || true
+  if [[ ! -d "${pid_dir}" ]]; then
+    log "App ${app}: diretório não existe (${pid_dir}), pulando limpeza"
+    return
+  fi
+
+  if [[ -f "${pid_file}" ]]; then
+    log "App ${app}: removendo pid: ${pid_file}"
+    rm -f "${pid_file}"
   else
-    log "Diretório não existe: ${PID_DIR}"
+    log "App ${app}: PID padrão não existe (${pid_file})"
   fi
+
+  find "${pid_dir}" -maxdepth 1 -type f -name "*.pid" -print -delete || true
 }
 
-stop_portainer
-remove_pid
-start_portainer
+process_app() {
+  local app="$1"
+  local pid_dir="$2"
+
+  if [[ ! -d "${pid_dir}" ]]; then
+    log "App ${app}: diretório do Docker não encontrado (${pid_dir}), pulando"
+    return
+  fi
+
+  log "App ${app}: iniciando correção de PID"
+  stop_app "${app}"
+  cleanup_pid_dir "${app}" "${pid_dir}"
+  start_app "${app}"
+}
+
+for entry in "${APP_PID_DIRS[@]}"; do
+  IFS=":" read -r app pid_dir <<<"${entry}"
+  process_app "${app}" "${pid_dir}"
+done
 
 log "OK"
 EOF
@@ -100,7 +128,7 @@ EOF
 
   cat > "${UNIT_FILE}" <<EOF
 [Unit]
-Description=Umbrel Portainer PID fix (para, remove docker.pid e inicia Portainer)
+Description=Umbrel Portainer PID fix (para, remove docker.pid e inicia Portainer/Arcane)
 After=network-online.target docker.service
 Wants=network-online.target
 
